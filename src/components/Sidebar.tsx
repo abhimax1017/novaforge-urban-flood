@@ -1,5 +1,5 @@
 import React from 'react';
-import { Droplets, Map, CloudRain, Activity, Navigation, Settings, BarChart2, Bell, ShieldAlert, Box } from 'lucide-react';
+import { Droplets, Map, CloudSun, Activity, Navigation, BarChart2, ShieldAlert, Box, Radio } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface SidebarProps {
@@ -12,11 +12,12 @@ interface SidebarProps {
 export default function Sidebar({ activeTab, setActiveTab, theme, onTriggerAlarm }: SidebarProps) {
   const navItems = [
     { id: 'overview', icon: Map, label: 'Live Map' },
+    { id: 'weather', icon: CloudSun, label: 'Live Forecast' },
     { id: '3d-map', icon: Box, label: '3D View' },
     { id: 'drainage', icon: Activity, label: 'Drainage Network' },
-    { id: 'sensors', icon: CloudRain, label: 'Sensor Fusion' },
+    { id: 'sensors', icon: Radio, label: 'Sensor Fusion' },
     { id: 'routing', icon: Navigation, label: 'Safe Routing' },
-    { id: 'impact', icon: Activity, label: 'Impact Projections' },
+    { id: 'impact', icon: BarChart2, label: 'Impact Projections' },
   ];
 
   return (

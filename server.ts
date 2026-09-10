@@ -123,16 +123,16 @@ User Question: ${question}
         
         meteoData = {
           current: {
-            temperature_2m: 28.5,
-            relative_humidity_2m: 85,
-            wind_speed_10m: 15,
-            precipitation: 12.0,
-            weather_code: 65 // Rain
+            temperature_2m: 26.5,
+            relative_humidity_2m: 75,
+            wind_speed_10m: 10,
+            precipitation: 0.0,
+            weather_code: 1 // Clear / Partly Cloudy
           },
           hourly: {
             time: [nextH1, nextH2, nextH3],
-            precipitation: [15.5, 8.0, 2.5],
-            precipitation_probability: [90, 75, 40]
+            precipitation: [0.0, 0.0, 0.0],
+            precipitation_probability: [0, 0, 0]
           }
         };
       }
@@ -190,8 +190,10 @@ Generate a concise, professional 2-sentence urgent alert for the citizens and ci
           humidity: current.relative_humidity_2m,
           windSpeed: current.wind_speed_10m,
           rainfall: current.precipitation,
-          // Open-Meteo weather codes mapping (simplified)
-          description: current.weather_code > 50 ? 'Rain' : current.weather_code > 0 ? 'Cloudy' : 'Clear',
+          // Open-Meteo weather codes mapping
+          description: (current.precipitation > 0 || (current.weather_code >= 51 && current.weather_code <= 99))
+            ? (current.precipitation > 5 ? 'Heavy Rain' : 'Rain')
+            : current.weather_code >= 1 && current.weather_code <= 3 ? 'Cloudy' : 'Clear',
         },
         forecast: next3Hours,
         alert: isHeavyRain ? {

@@ -36,7 +36,11 @@ export default function App() {
   
   // Initialize live weather data for map rendering
   const { weather, loading: weatherLoading, isLive: weatherIsLive, lastUpdated: weatherLastUpdated } = useLiveWeather(selectedLocation);
-  const isRaining = weather?.current?.rainfall > 0;
+  
+  // Real condition: is it currently raining at this location?
+  const isRaining = Number(weather?.current?.rainfall ?? 0) > 0 || 
+                    weather?.current?.description === 'Rain' || 
+                    weather?.current?.description === 'Heavy Rain';
 
   // Derive current prediction from timeOffset with smooth linear interpolation
   const currentPrediction = React.useMemo(() => {
@@ -151,6 +155,7 @@ export default function App() {
         setMapTheme={setMapTheme}
         notificationsEnabled={notificationsEnabled}
         requestPermission={requestPermission}
+        weather={weather}
       />
 
       {/* Society Flood Warning & Emergency Siren Banner */}
@@ -179,6 +184,7 @@ export default function App() {
               activeTab={activeTab}
               theme={mapTheme}
               isRaining={isRaining}
+              liveRainfallMm={Number(weather?.current?.rainfall ?? 0)}
               currentPrediction={currentPrediction}
               selectedRouteId={selectedRouteId}
               onSelectRoute={setSelectedRouteId}
@@ -194,6 +200,30 @@ export default function App() {
                  onSelectRoute={setSelectedRouteId}
                  onTriggerAlarm={() => setIsSocietyAlertOpen(true)}
                />
+            )}
+
+            {/* Dedicated Live Weather Forecast Interactive Panel */}
+            {activeTab === 'weather' && (
+              <div className="absolute top-4 left-4 z-30 w-96 max-w-[92vw] shadow-2xl rounded-xl overflow-hidden border border-slate-700/50 bg-slate-900">
+                <div className="flex justify-between items-center px-4 py-2 bg-slate-950 text-white text-xs font-bold border-b border-slate-800">
+                  <span className="tracking-wider uppercase">Live Meteorological Nowcast</span>
+                  <button 
+                    onClick={() => setActiveTab('overview')}
+                    className="text-slate-400 hover:text-white px-2 py-0.5 rounded text-xs transition-colors"
+                  >
+                    ✕ Close
+                  </button>
+                </div>
+                <div className="max-h-[80vh] overflow-y-auto">
+                  <WeatherPanel 
+                    location={selectedLocation} 
+                    theme={mapTheme} 
+                    weather={weather} 
+                    loading={weatherLoading} 
+                    isLive={weatherIsLive} 
+                  />
+                </div>
+              </div>
             )}
 
             {/* Coupled DEM / Drainage Panel */}

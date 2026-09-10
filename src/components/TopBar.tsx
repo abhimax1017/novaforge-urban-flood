@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, MapPin, Radio, ChevronDown, Loader2, Moon, Sun, Bell, BellOff } from 'lucide-react';
+import { Search, MapPin, Radio, ChevronDown, Loader2, Moon, Sun, Bell, BellOff, CloudRain, Cloud } from 'lucide-react';
 import { Location } from '../types';
 import { cn } from '../lib/utils';
 
@@ -12,6 +12,7 @@ interface TopBarProps {
   setMapTheme: (t: 'light' | 'dark') => void;
   notificationsEnabled?: boolean;
   requestPermission?: () => void;
+  weather?: any;
 }
 
 export default function TopBar({ 
@@ -22,7 +23,8 @@ export default function TopBar({
   mapTheme, 
   setMapTheme,
   notificationsEnabled = false,
-  requestPermission
+  requestPermission,
+  weather
 }: TopBarProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -153,6 +155,34 @@ export default function TopBar({
           )}
         </div>
       </div>
+
+      {/* Live Weather Forecast Badge */}
+      {weather?.current && (
+        <div 
+          className={cn(
+            "hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs transition-colors",
+            mapTheme === 'light' ? "bg-blue-50/80 border-blue-100 text-slate-800" : "bg-blue-950/30 border-blue-900/50 text-slate-200"
+          )}
+          title={`Forecast: ${weather.current.description} | Rain: ${weather.current.rainfall} mm/h`}
+        >
+          {weather.current.rainfall > 0 ? (
+            <CloudRain className="w-4 h-4 text-blue-500 animate-pulse shrink-0" />
+          ) : (
+            <Cloud className="w-4 h-4 text-slate-400 shrink-0" />
+          )}
+          <span className="font-bold font-mono text-sm">
+            {weather.current.temperature.toFixed(1)}°C
+          </span>
+          <span className="text-slate-500 dark:text-slate-400 font-medium truncate max-w-[110px]">
+            {weather.current.description}
+          </span>
+          {weather.current.rainfall > 0 && (
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-blue-600 text-white">
+              {weather.current.rainfall} mm/h
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Status & Theme */}
       <div className="hidden sm:flex items-center gap-4 shrink-0">

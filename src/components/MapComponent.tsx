@@ -19,7 +19,9 @@ import {
   EyeOff,
   Compass,
   Gauge,
-  Navigation
+  Navigation,
+  Cloud,
+  Sun
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useRealMapData } from '../hooks/useRealMapData';
@@ -70,6 +72,7 @@ interface MapComponentProps {
   activeTab?: string;
   theme?: 'light' | 'dark';
   isRaining?: boolean;
+  liveRainfallMm?: number;
   currentPrediction?: PredictionData;
   selectedRouteId?: string;
   isAlarmActive?: boolean;
@@ -83,6 +86,7 @@ export default function MapComponent({
   activeTab = 'overview', 
   theme = 'light', 
   isRaining = false, 
+  liveRainfallMm = 0,
   currentPrediction,
   selectedRouteId = 'route-ridge',
   isAlarmActive = false,
@@ -274,13 +278,13 @@ export default function MapComponent({
     return DEMO_SENSORS.map((s, idx) => {
       const dLat = (idx === 0 ? 0.005 : idx === 1 ? 0.002 : idx === 2 ? 0.009 : idx === 3 ? -0.008 : -0.004);
       const dLng = (idx === 0 ? 0.003 : idx === 1 ? -0.004 : idx === 2 ? 0.006 : idx === 3 ? -0.007 : -0.011);
-      const depth = currentPrediction?.maxDepthCm || 20;
+      const depth = currentPrediction?.maxDepthCm ?? 5;
       
       let val = s.value;
       if (s.type === 'water_level') {
-        val = Math.max(4, Math.round(depth * (idx === 0 ? 1.08 : 0.42)));
+        val = Math.max(2, Math.round(depth * (idx === 0 ? 1.08 : 0.42)));
       } else if (s.type === 'rain_gauge') {
-        val = currentPrediction?.rainfallIntensityMm || s.value;
+        val = currentPrediction?.rainfallIntensityMm ?? s.value;
       }
 
       return {
@@ -337,17 +341,25 @@ export default function MapComponent({
   };
 
   const severity = getDepthSeverity(currentDepth, floodPercentage);
-  const currentRainfallMm = currentPrediction?.rainfallIntensityMm || 12;
+  const currentRainfallMm = currentPrediction?.rainfallIntensityMm ?? 0;
   const rainRisk = getRainfallRisk(currentRainfallMm);
 
-  // Computed rain state (auto from live prediction/alarm, or manually overridden)
+  // Computed rain state (strictly according to live weather forecast in auto mode)
   const effectiveRainIntensity: RainIntensity = useMemo(() => {
     if (rainMode !== 'auto') return rainMode;
-    if (isRaining || (currentPrediction?.rainfallIntensityMm ?? 0) > 0) {
-      return (currentPrediction?.rainfallIntensityMm ?? 0) > 20 ? 'heavy' : 'light';
+    
+    // In AUTO mode: strictly obey live weather forecast!
+    // ONLY show rain drops if it is ACTUALLY raining at this location in real time:
+    if (isRaining || liveRainfallMm > 0) {
+      const mm = liveRainfallMm > 0 ? liveRainfallMm : 5;
+      if (mm > 35) return 'storm';
+      if (mm > 5) return 'heavy';
+      return 'light';
     }
+    
+    // If not raining at this location according to live weather forecast: rain is OFF!
     return 'off';
-  }, [rainMode, isRaining, currentPrediction?.rainfallIntensityMm]);
+  }, [rainMode, isRaining, liveRainfallMm]);
 
   // Determine if flood has started (timeOffset > 0 or water depth > 10cm)
   const isFloodActive = (timeOffsetMin > 0) || (currentDepth > 10) || ((currentPrediction?.maxDepthCm ?? 0) > 10);
@@ -452,13 +464,20 @@ export default function MapComponent({
             "px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors shrink-0",
             effectiveRainIntensity !== 'off'
               ? "bg-sky-500/20 text-sky-600 dark:text-sky-300 border border-sky-500/40" 
-              : "text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+              : "text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-transparent"
           )}
-          title={`Cycle rain simulation mode. Current: ${rainMode} (${effectiveRainIntensity})`}
+          title={`Rain mode: ${rainMode === 'auto' ? 'Live Weather Forecast' : 'Manual Override'} (${effectiveRainIntensity === 'off' ? 'No rain at place' : effectiveRainIntensity})`}
         >
-          <CloudRain className={cn("w-3.5 h-3.5", effectiveRainIntensity !== 'off' && "text-sky-400 animate-pulse")} />
+          {effectiveRainIntensity !== 'off' ? (
+            <CloudRain className="w-3.5 h-3.5 text-sky-400 animate-pulse" />
+          ) : (
+            <Cloud className="w-3.5 h-3.5 text-slate-400" />
+          )}
           <span>
-            Rain: {rainMode === 'auto' ? `Auto (${effectiveRainIntensity})` : rainMode.toUpperCase()}
+            {rainMode === 'auto' 
+              ? (effectiveRainIntensity !== 'off' ? `Rain: Live (${effectiveRainIntensity})` : 'Rain: Live (Dry)') 
+              : `Rain: Forced (${rainMode})`
+            }
           </span>
         </button>
 

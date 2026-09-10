@@ -28,7 +28,20 @@ export default function WeatherPanel({ location, theme, weather, loading, isLive
     });
   }, [weather]);
 
-  if (loading || !weather) return null;
+  if (!weather) {
+    return (
+      <div className={cn(
+        "p-5 border-b transition-colors flex flex-col gap-3",
+        theme === 'light' ? "bg-slate-50/50 border-slate-200" : "bg-slate-900/50 border-slate-800"
+      )}>
+        <div className="flex justify-between items-center">
+          <h2 className="text-xs font-bold text-slate-500 tracking-widest uppercase">Live Weather Forecast</h2>
+          <span className="text-[10px] text-slate-400">Loading forecast...</span>
+        </div>
+        <div className="h-16 rounded bg-slate-200/50 dark:bg-slate-800/50 animate-pulse" />
+      </div>
+    );
+  }
 
   const current = weather.current;
   const forecast = weather.forecast;
@@ -40,13 +53,16 @@ export default function WeatherPanel({ location, theme, weather, loading, isLive
       theme === 'light' ? "bg-slate-50/50 border-slate-200" : "bg-slate-900/50 border-slate-800"
     )}>
       <div className="flex justify-between items-center mb-1">
-        <h2 className="text-xs font-bold text-slate-500 tracking-widest uppercase">Live Weather</h2>
+        <div>
+          <h2 className="text-xs font-bold text-slate-500 tracking-widest uppercase">Live Weather Forecast</h2>
+          <div className="text-[10px] text-slate-400 font-medium">Real-time telemetry & nowcast</div>
+        </div>
         <div className={cn(
           "text-[9px] font-bold px-2 py-0.5 rounded border flex items-center gap-1",
           theme === 'light' ? "bg-slate-100 text-slate-500 border-slate-200" : "bg-slate-800 text-slate-400 border-slate-700"
         )}>
           {isLive && <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />}
-          {isLive ? 'LIVE' : 'DEMO'}
+          {isLive ? 'LIVE' : 'AUTO SYNC'}
         </div>
       </div>
 

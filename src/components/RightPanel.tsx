@@ -190,6 +190,11 @@ export default function RightPanel({
         </div>
       </div>
 
+      {/* Live Weather Forecast Module */}
+      {weather && (
+        <WeatherPanel location={location!} theme={theme} weather={weather} loading={!!weatherLoading} isLive={!!weatherIsLive} />
+      )}
+
       {/* Society Risk Alert Module */}
       {societyAlert && (
         <div className={cn(
@@ -249,9 +254,6 @@ export default function RightPanel({
       )}
 
       
-      {['overview', 'sensors'].includes(activeTab || 'overview') && weather && (
-        <WeatherPanel location={location!} theme={theme} weather={weather} loading={!!weatherLoading} isLive={!!weatherIsLive} />
-      )}
       {activeTab === 'overview' && criticalZones && criticalZones.length > 0 && (
         <CriticalZonesSummary zones={criticalZones} theme={theme} />
       )}

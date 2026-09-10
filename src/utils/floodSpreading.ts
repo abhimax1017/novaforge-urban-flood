@@ -23,8 +23,11 @@ export function calculateFloodPropagation(
   centerLng: number,
   depthCm: number
 ): FloodPropagationResult {
+  // Ensure non-negative safe depth
+  const safeDepth = Math.max(0, depthCm);
+
   // Normalize flood percentage from 0% (baseline 5cm) to 100% (65cm+)
-  const floodPercent = Math.min(100, Math.max(0, Math.round(((depthCm - 5) / 60) * 100)));
+  const floodPercent = Math.min(100, Math.max(0, Math.round(((safeDepth - 5) / 60) * 100)));
 
   // Center / low elevation accumulation epicenter
   const originLng = centerLng;
