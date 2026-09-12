@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Sparkles } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Sparkles, Sliders, ShieldCheck } from 'lucide-react';
 import { cn } from './lib/utils';
 import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
@@ -8,63 +8,99 @@ import RightPanel from './components/RightPanel';
 import TimelineSlider from './components/TimelineSlider';
 import WeatherPanel from './components/WeatherPanel';
 import AIAssistant from './components/AIAssistant';
-import { CriticalZonesSummary } from './components/CriticalZonesSummary';
 import { RoutingPanel } from './components/RoutingPanel';
 import { DrainagePanel } from './components/DrainagePanel';
+import RadarRainfallPanel from './components/RadarRainfallPanel';
+import DEMTerrainPanel from './components/DEMTerrainPanel';
+import PipelineFlowBar from './components/PipelineFlowBar';
+import WhatIfSimulatorModal from './components/WhatIfSimulatorModal';
+import SystemValidationModal from './components/SystemValidationModal';
 import { SensorFusionPanel } from './components/SensorFusionPanel';
-import { ImpactTab } from './components/ImpactTab';
 import { SocietyAlertSystem } from './components/SocietyAlertSystem';
 import { SocietyAlarmBanner } from './components/SocietyAlarmBanner';
-import { LOCATIONS, DEMO_PREDICTIONS, DEMO_ROADS } from './data';
-import { Location, PredictionData, RoadRisk } from './types';
+import { LOCATIONS, DEMO_PREDICTIONS } from './data';
+import { Location, PredictionData, RoadRisk, WhatIfConfig } from './types';
 import { useWeatherNotifications } from './hooks/useWeatherNotifications';
 import { useLiveWeather } from './hooks/useLiveWeather';
+import { computeCoupledNowcast } from './utils/nowcastEngine';
+import { generateDrainageNetwork, calculateHydraulicNetworkState, SimulationState } from './utils/drainageGraph';
+import { generateUrbanDEM, calculateSurfaceWaterAccumulation } from './utils/terrainDEM';
+import { CRITICAL_FACILITIES } from './utils/criticalInfrastructure';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState<string>('overview');
   const [selectedLocation, setSelectedLocation] = useState<Location>(LOCATIONS[0]);
-  const [timeOffsetMin, setTimeOffsetMin] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [timeOffsetMin, setTimeOffsetMin] = useState<number>(0);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [selectedRoad, setSelectedRoad] = useState<RoadRisk | null>(null);
-  const [isAIOpen, setIsAIOpen] = useState(false);
-  const [mapTheme, setMapTheme] = useState<'light'|'dark'>('light');
-  const [selectedRouteId, setSelectedRouteId] = useState('route-ridge');
-  const [isSocietyAlertOpen, setIsSocietyAlertOpen] = useState(false);
+  const [isAIOpen, setIsAIOpen] = useState<boolean>(false);
+  const [mapTheme, setMapTheme] = useState<'light'|'dark'>('dark');
+  const [selectedRouteId, setSelectedRouteId] = useState<string>('route-ridge');
+  const [isSocietyAlertOpen, setIsSocietyAlertOpen] = useState<boolean>(false);
+  const [isWhatIfOpen, setIsWhatIfOpen] = useState<boolean>(false);
+  const [isValidationOpen, setIsValidationOpen] = useState<boolean>(false);
+  const [drainageViewMode, setDrainageViewMode] = useState<'surface' | 'underground' | 'both'>('both');
+  const [pumpsActive, setPumpsActive] = useState<boolean>(true);
 
-  // Initialize background weather polling and notifications
+  // What-If Simulation State
+  const [whatIfConfig, setWhatIfConfig] = useState<WhatIfConfig>({
+    rainfallMmHr: 35,
+    drainBlockagePct: 35,
+    tideLevelM: 0.8,
+    pumpCapacityM3s: 22,
+    soilSaturationPct: 82,
+    greenInfraEfficiencyPct: 30
+  });
+
+  // Background weather polling
   const { notificationsEnabled, requestPermission } = useWeatherNotifications(selectedLocation);
+  const { weather, loading: weatherLoading, isLive: weatherIsLive } = useLiveWeather(selectedLocation);
   
-  // Initialize live weather data for map rendering
-  const { weather, loading: weatherLoading, isLive: weatherIsLive, lastUpdated: weatherLastUpdated } = useLiveWeather(selectedLocation);
-  
-  // Real condition: is it currently raining at this location?
+  // Real condition check
   const isRaining = Number(weather?.current?.rainfall ?? 0) > 0 || 
                     weather?.current?.description === 'Rain' || 
                     weather?.current?.description === 'Heavy Rain';
 
-  // Derive current prediction from timeOffset with smooth linear interpolation
-  const currentPrediction = React.useMemo(() => {
-    const stops = DEMO_PREDICTIONS;
-    if (timeOffsetMin <= stops[0].timeOffsetMin) return stops[0];
-    if (timeOffsetMin >= stops[stops.length - 1].timeOffsetMin) return stops[stops.length - 1];
+  // Compute Coupled Urban Hydrodynamic State using rainfall, DEM, and drainage graph
+  const coupledState = useMemo(() => {
+    return computeCoupledNowcast(
+      selectedLocation.lat,
+      selectedLocation.lng,
+      timeOffsetMin,
+      whatIfConfig
+    );
+  }, [selectedLocation.lat, selectedLocation.lng, timeOffsetMin, whatIfConfig]);
 
-    for (let i = 0; i < stops.length - 1; i++) {
-      const s1 = stops[i];
-      const s2 = stops[i + 1];
-      if (timeOffsetMin >= s1.timeOffsetMin && timeOffsetMin <= s2.timeOffsetMin) {
-        const ratio = (timeOffsetMin - s1.timeOffsetMin) / (s2.timeOffsetMin - s1.timeOffsetMin);
-        return {
-          timeOffsetMin,
-          floodedAreaKm2: Number((s1.floodedAreaKm2 + (s2.floodedAreaKm2 - s1.floodedAreaKm2) * ratio).toFixed(2)),
-          maxDepthCm: Math.round(s1.maxDepthCm + (s2.maxDepthCm - s1.maxDepthCm) * ratio),
-          rainfallIntensityMm: Math.round(s1.rainfallIntensityMm + (s2.rainfallIntensityMm - s1.rainfallIntensityMm) * ratio)
-        };
-      }
-    }
-    return stops[0];
-  }, [timeOffsetMin]);
+  // Current Prediction object synchronized with coupled model
+  const currentPrediction: PredictionData = useMemo(() => {
+    return {
+      timeOffsetMin,
+      floodedAreaKm2: coupledState.floodedAreaKm2,
+      maxDepthCm: coupledState.maxDepthCm,
+      rainfallIntensityMm: coupledState.rainfallIntensityMm
+    };
+  }, [timeOffsetMin, coupledState]);
 
-  // Handle playback
+  // Dynamic Drainage Graph computation
+  const drainageNetwork = useMemo(() => {
+    const { nodes, edges } = generateDrainageNetwork(selectedLocation.lat, selectedLocation.lng);
+    const simState: SimulationState = {
+      rainfallMmHr: whatIfConfig.rainfallMmHr,
+      timeOffsetMin,
+      globalBlockagePct: whatIfConfig.drainBlockagePct,
+      nodeBlockages: {},
+      pumpBoostActive: pumpsActive,
+      pumpCapacityM3s: pumpsActive ? whatIfConfig.pumpCapacityM3s : 0
+    };
+    return calculateHydraulicNetworkState(nodes, edges, simState);
+  }, [selectedLocation.lat, selectedLocation.lng, whatIfConfig, timeOffsetMin, pumpsActive]);
+
+  // DEM Terrain Model Data
+  const demModel = useMemo(() => {
+    return generateUrbanDEM(selectedLocation.lat, selectedLocation.lng);
+  }, [selectedLocation.lat, selectedLocation.lng]);
+
+  // Handle Playback timeline
   useEffect(() => {
     let interval: number;
     if (isPlaying) {
@@ -74,47 +110,30 @@ export default function App() {
             setIsPlaying(false);
             return 180;
           }
-          return prev + 15; // increment by 15 mins for smooth playback
+          return prev + 15;
         });
-      }, 1000);
+      }, 1200);
     }
     return () => clearInterval(interval);
   }, [isPlaying]);
 
-  // Mock selecting a road based on current location
+  // Select road when coupled state updates or user changes time/location
   useEffect(() => {
-    const riskLevel = timeOffsetMin > 120 ? 'critical' : timeOffsetMin > 60 ? 'high' : 'moderate';
-    const dynamicRoad: RoadRisk = {
-      ...DEMO_ROADS[0],
-      id: selectedLocation.id,
-      name: `${selectedLocation.name.split(',')[0]} Main St`,
-      risk: riskLevel as any,
-      depthCm: currentPrediction.maxDepthCm,
-      timeToFloodMin: Math.max(0, 180 - timeOffsetMin),
-    };
-    setSelectedRoad(dynamicRoad);
-  }, [timeOffsetMin, selectedLocation, currentPrediction]);
-
-  const criticalZones = React.useMemo(() => {
-    // Only show critical zones when prediction is somewhat advanced
-    if (timeOffsetMin < 60) return [];
-
-    const baseName = selectedLocation.name.split(',')[0];
-    const zones = [
-      { name: `${baseName} Main St`, time: Math.max(0, 120 - timeOffsetMin), depth: currentPrediction.maxDepthCm },
-      { name: `${baseName} Underpass`, time: Math.max(0, 90 - timeOffsetMin), depth: Math.round(currentPrediction.maxDepthCm * 1.3) },
-    ];
-    
-    if (timeOffsetMin >= 120) {
-      zones.push({ name: `${baseName} Market Square`, time: Math.max(0, 150 - timeOffsetMin), depth: Math.round(currentPrediction.maxDepthCm * 0.8) });
-      zones.push({ name: `Lower ${baseName} Riverside`, time: 0, depth: Math.round(currentPrediction.maxDepthCm * 1.5) });
+    if (coupledState.roads.length > 0) {
+      setSelectedRoad(coupledState.roads[0]);
     }
+  }, [coupledState]);
 
-    return zones;
-  }, [timeOffsetMin, selectedLocation, currentPrediction]);
+  const criticalZones = useMemo(() => {
+    if (coupledState.maxDepthCm < 15) return [];
+    return [
+      { name: 'Metro Underpass Surcharge', time: coupledState.timeToFloodMin, depth: coupledState.maxDepthCm },
+      { name: 'MG Road Basin Junction', time: Math.max(0, coupledState.timeToFloodMin - 10), depth: Math.round(coupledState.maxDepthCm * 0.9) },
+      { name: 'South Canal Overcapacity Outfall', time: Math.max(0, coupledState.timeToFloodMin + 15), depth: Math.round(coupledState.maxDepthCm * 1.2) },
+    ];
+  }, [coupledState]);
 
   const handleMapClick = async (lat: number, lng: number) => {
-    // Instantly update the location to show "Locating..."
     setSelectedLocation({
       id: `${lat},${lng}`,
       name: "Locating...",
@@ -128,16 +147,16 @@ export default function App() {
       if (data && data.display_name) {
         setSelectedLocation({
           id: data.place_id ? data.place_id.toString() : `${lat},${lng}`,
-          name: data.display_name.split(',')[0], // Use first part of the address
+          name: data.display_name.split(',')[0],
           lat,
           lng
         });
       } else {
-        setSelectedLocation(prev => ({ ...prev, name: "Selected Location" }));
+        setSelectedLocation(prev => ({ ...prev, name: "Selected Urban Basin" }));
       }
     } catch (error) {
-      console.error("Reverse geocoding failed:", error);
-      setSelectedLocation(prev => ({ ...prev, name: "Selected Location" }));
+      console.error("Reverse geocoding error:", error);
+      setSelectedLocation(prev => ({ ...prev, name: "Selected Urban Basin" }));
     }
   };
 
@@ -146,6 +165,7 @@ export default function App() {
       "flex flex-col h-screen w-screen overflow-hidden font-sans transition-colors duration-300",
       mapTheme === 'light' ? "bg-slate-50 text-slate-800" : "bg-slate-950 text-slate-200"
     )}>
+      {/* Top Bar with location, live weather and settings */}
       <TopBar 
         locations={LOCATIONS} 
         selectedLocation={selectedLocation} 
@@ -158,7 +178,14 @@ export default function App() {
         weather={weather}
       />
 
-      {/* Society Flood Warning & Emergency Siren Banner */}
+      {/* SIH26085 Coupled Pipeline Visual Bar */}
+      <PipelineFlowBar
+        activeTab={activeTab}
+        onSelectStep={(step) => setActiveTab(step)}
+        onOpenValidation={() => setIsValidationOpen(true)}
+      />
+
+      {/* Society Warning Banner */}
       <SocietyAlarmBanner
         location={selectedLocation}
         prediction={currentPrediction}
@@ -168,14 +195,17 @@ export default function App() {
       />
       
       <div className="flex flex-1 overflow-hidden relative">
+        {/* Sidebar with all problem statement views */}
         <Sidebar 
           activeTab={activeTab} 
           setActiveTab={setActiveTab} 
           theme={mapTheme} 
           onTriggerAlarm={() => setIsSocietyAlertOpen(true)}
+          onOpenWhatIf={() => setIsWhatIfOpen(true)}
+          onOpenValidation={() => setIsValidationOpen(true)}
         />
         
-        <div className="flex-1 relative flex flex-col p-4 z-10">
+        <div className="flex-1 relative flex flex-col p-3 sm:p-4 z-10">
           <div className="flex-1 relative">
             <MapComponent 
               location={selectedLocation} 
@@ -184,13 +214,67 @@ export default function App() {
               activeTab={activeTab}
               theme={mapTheme}
               isRaining={isRaining}
-              liveRainfallMm={Number(weather?.current?.rainfall ?? 0)}
+              liveRainfallMm={coupledState.rainfallIntensityMm}
               currentPrediction={currentPrediction}
               selectedRouteId={selectedRouteId}
               onSelectRoute={setSelectedRouteId}
               isAlarmActive={isSocietyAlertOpen}
+              drainageGraph={{
+                nodes: drainageNetwork.nodes,
+                edges: drainageNetwork.edges,
+                systemLoadPct: drainageNetwork.systemLoadPct,
+                totalBackflowM3s: drainageNetwork.totalBackflowM3s,
+                surchargingNodesCount: drainageNetwork.surchargingCount
+              }}
+              criticalFacilities={CRITICAL_FACILITIES}
+              viewMode={drainageViewMode}
+              onChangeViewMode={setDrainageViewMode}
             />
-            {/* Multi-Route Safe Evacuation Hub */}
+
+            {/* Radar Panel */}
+            {activeTab === 'radar' && (
+              <RadarRainfallPanel
+                theme={mapTheme}
+                currentRainfallMmHr={coupledState.rainfallIntensityMm}
+                timeOffsetMin={timeOffsetMin}
+                onClose={() => setActiveTab('overview')}
+              />
+            )}
+
+            {/* DEM Terrain Panel */}
+            {activeTab === 'dem' && (
+              <DEMTerrainPanel
+                theme={mapTheme}
+                points={demModel.points}
+                catchments={demModel.catchments}
+                lowPoint={demModel.lowPoint}
+                highPoint={demModel.highPoint}
+                rainfallMmHr={coupledState.rainfallIntensityMm}
+              />
+            )}
+
+            {/* Enhanced Drainage Graph Panel */}
+            {activeTab === 'drainage' && (
+              <DrainagePanel 
+                theme={mapTheme}
+                nodes={drainageNetwork.nodes}
+                edges={drainageNetwork.edges}
+                systemLoadPct={drainageNetwork.systemLoadPct}
+                totalBackflowM3s={drainageNetwork.totalBackflowM3s}
+                surchargingCount={drainageNetwork.surchargingCount}
+                causalChain={coupledState.causalChain}
+                globalBlockagePct={whatIfConfig.drainBlockagePct}
+                onUpdateBlockage={(pct) => {
+                  setWhatIfConfig(prev => ({ ...prev, drainBlockagePct: pct }));
+                }}
+                viewMode={drainageViewMode}
+                onChangeViewMode={setDrainageViewMode}
+                onTogglePumps={() => setPumpsActive(prev => !prev)}
+                pumpsActive={pumpsActive}
+              />
+            )}
+
+            {/* Safe Evacuation Routing Hub */}
             {activeTab === 'routing' && (
                <RoutingPanel 
                  theme={mapTheme} 
@@ -202,7 +286,7 @@ export default function App() {
                />
             )}
 
-            {/* Dedicated Live Weather Forecast Interactive Panel */}
+            {/* Live Weather Meteorological Forecast */}
             {activeTab === 'weather' && (
               <div className="absolute top-4 left-4 z-30 w-96 max-w-[92vw] shadow-2xl rounded-xl overflow-hidden border border-slate-700/50 bg-slate-900">
                 <div className="flex justify-between items-center px-4 py-2 bg-slate-950 text-white text-xs font-bold border-b border-slate-800">
@@ -226,12 +310,7 @@ export default function App() {
               </div>
             )}
 
-            {/* Coupled DEM / Drainage Panel */}
-            {activeTab === 'drainage' && (
-               <DrainagePanel theme={mapTheme} prediction={currentPrediction} />
-            )}
-
-            {/* Comprehensive IoT Sensor Fusion & Telemetry Hub */}
+            {/* Comprehensive IoT Sensor Fusion Hub */}
             {activeTab === 'sensors' && (
                <SensorFusionPanel 
                  theme={mapTheme} 
@@ -239,24 +318,26 @@ export default function App() {
                  prediction={currentPrediction} 
                  onClose={() => setActiveTab('overview')}
                  onSelectSensor={(sensor) => {
-                   // Center or focus on sensor if needed
-                   console.log('Selected sensor:', sensor.id);
+                   console.log('Selected sensor telemetry:', sensor.id);
                  }}
                />
             )}
 
+            {/* AI Assistant modal button */}
             {isAIOpen ? (
               <AIAssistant onClose={() => setIsAIOpen(false)} theme={mapTheme} location={selectedLocation} prediction={currentPrediction} />
             ) : (
               <button 
                 onClick={() => setIsAIOpen(true)}
-                className="absolute bottom-24 right-8 w-12 h-12 bg-blue-600 rounded-full shadow-lg shadow-blue-900/20 flex items-center justify-center hover:bg-blue-500 transition-colors z-30 border border-blue-400 group"
+                className="absolute bottom-24 right-8 w-12 h-12 bg-cyan-600 rounded-full shadow-lg shadow-cyan-900/30 flex items-center justify-center hover:bg-cyan-500 transition-colors z-30 border border-cyan-400 group"
+                title="AI Hydraulic Assistant"
               >
                 <Sparkles className="w-5 h-5 text-white group-hover:scale-110 transition-transform" />
               </button>
             )}
           </div>
 
+          {/* 0–3 Hour Nowcasting Timeline Slider */}
           <div className="absolute bottom-10 left-1/2 -translate-x-1/2 w-[800px] max-w-[90%] z-20 pointer-events-none">
             <div className="pointer-events-auto w-full">
               <TimelineSlider 
@@ -270,6 +351,7 @@ export default function App() {
           </div>
         </div>
 
+        {/* Right Intelligence Panel */}
         <RightPanel 
           prediction={currentPrediction} 
           selectedRoad={selectedRoad} 
@@ -282,10 +364,16 @@ export default function App() {
           location={selectedLocation} 
           onOpenAlertModal={() => setIsSocietyAlertOpen(true)}
           onOpenRouting={() => setActiveTab('routing')}
+          onOpenWhatIfModal={() => setIsWhatIfOpen(true)}
+          onOpenValidationModal={() => setIsValidationOpen(true)}
+          timeToFloodMin={coupledState.timeToFloodMin}
+          confidenceScore={coupledState.confidenceScore}
+          drainUtilizationPct={coupledState.drainUtilizationPct}
+          fusedExplanations={coupledState.fusedExplanations}
         />
       </div>
 
-      {/* Society Risk Alert & Audio Siren Modal Dialog */}
+      {/* Society Siren & Warning System */}
       <SocietyAlertSystem
         isOpen={isSocietyAlertOpen}
         onClose={() => setIsSocietyAlertOpen(false)}
@@ -296,6 +384,35 @@ export default function App() {
           setSelectedRouteId(id);
           setActiveTab('routing');
         }}
+      />
+
+      {/* "What-If" Scenario Simulator Modal (SIH26085 §15) */}
+      <WhatIfSimulatorModal
+        isOpen={isWhatIfOpen}
+        onClose={() => setIsWhatIfOpen(false)}
+        config={whatIfConfig}
+        onApplyConfig={(cfg) => setWhatIfConfig(cfg)}
+        onResetConfig={() => setWhatIfConfig({
+          rainfallMmHr: 35,
+          drainBlockagePct: 35,
+          tideLevelM: 0.8,
+          pumpCapacityM3s: 22,
+          soilSaturationPct: 82,
+          greenInfraEfficiencyPct: 30
+        })}
+        currentResult={{
+          maxDepthCm: coupledState.maxDepthCm,
+          floodedAreaKm2: coupledState.floodedAreaKm2,
+          drainLoadPct: coupledState.drainUtilizationPct,
+          timeToFloodMin: coupledState.timeToFloodMin,
+          roadsAtRiskCount: coupledState.roads.filter(r => r.risk === 'critical' || r.risk === 'high').length
+        }}
+      />
+
+      {/* SIH 2026 Problem Statement Validation Suite Modal (SIH26085 §21) */}
+      <SystemValidationModal
+        isOpen={isValidationOpen}
+        onClose={() => setIsValidationOpen(false)}
       />
     </div>
   );

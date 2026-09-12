@@ -1,6 +1,6 @@
 {
   "name": "NovaForge",
-  "description": "Urban Flood Nowcasting System",
+  "description": "Urban Flood Nowcasting System (Drainage and Rainfall Coupling) - Problem Statement SIH26085",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

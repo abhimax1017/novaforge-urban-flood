@@ -21,7 +21,12 @@ import {
   Gauge,
   Navigation,
   Cloud,
-  Sun
+  Sun,
+  Building,
+  Flame,
+  Zap,
+  Box,
+  Sparkles
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useRealMapData } from '../hooks/useRealMapData';
@@ -30,6 +35,9 @@ import { getRealisticNeighborhoodRoads } from '../utils/neighborhoodRoads';
 import { calculateFloodPropagation } from '../utils/floodSpreading';
 import { RainCanvasOverlay, RainIntensity } from './RainCanvasOverlay';
 import { getRainfallRisk } from '../utils/rainfallRisk';
+import { CRITICAL_FACILITIES, evaluateInfrastructureThreats } from '../utils/criticalInfrastructure';
+import { DEFAULT_DRAINAGE_GRAPH } from '../utils/drainageGraph';
+import { CriticalFacility, DrainageGraph } from '../types';
 
 /**
  * Generates a GeoJSON Polygon representing a circle given center and radius in meters.
@@ -77,6 +85,10 @@ interface MapComponentProps {
   selectedRouteId?: string;
   isAlarmActive?: boolean;
   onSelectRoute?: (routeId: string) => void;
+  drainageGraph?: DrainageGraph;
+  criticalFacilities?: CriticalFacility[];
+  viewMode?: 'surface' | 'underground' | 'both';
+  onChangeViewMode?: (mode: 'surface' | 'underground' | 'both') => void;
 }
 
 export default function MapComponent({ 
@@ -90,7 +102,11 @@ export default function MapComponent({
   currentPrediction,
   selectedRouteId = 'route-ridge',
   isAlarmActive = false,
-  onSelectRoute
+  onSelectRoute,
+  drainageGraph = DEFAULT_DRAINAGE_GRAPH,
+  criticalFacilities = CRITICAL_FACILITIES,
+  viewMode = 'both',
+  onChangeViewMode
 }: MapComponentProps) {
   // Default pitch 0 (orthogonal top-down) matching hydrodynamic flood simulation aerial view
   const [viewState, setViewState] = useState({
@@ -103,8 +119,10 @@ export default function MapComponent({
 
   const [mapMode, setMapMode] = useState<'normal' | 'satellite'>('satellite');
   const [is3DMode, setIs3DMode] = useState(activeTab === '3d-map');
+  const [digitalTwinPerspective, setDigitalTwinPerspective] = useState<'ground' | 'underground' | 'combined'>('combined');
   const [showFloodLayer, setShowFloodLayer] = useState(true);
   const [showSensors, setShowSensors] = useState(true);
+  const [showFacilities, setShowFacilities] = useState(true);
   const [rainMode, setRainMode] = useState<'auto' | 'off' | 'light' | 'heavy'>('auto');
   const [routesDisplayMode, setRoutesDisplayMode] = useState<'when_flooded' | 'always' | 'hidden'>('when_flooded');
   const [isLegendMinimized, setIsLegendMinimized] = useState(false);
@@ -113,12 +131,13 @@ export default function MapComponent({
   // Sync 3D tab or camera state
   useEffect(() => {
     if (activeTab === '3d-map' || is3DMode) {
-      setViewState(prev => ({
-        ...prev,
-        pitch: 52,
-        bearing: 22,
-        zoom: 14.5
-      }));
+      if (digitalTwinPerspective === 'underground') {
+        setViewState(prev => ({ ...prev, pitch: 62, bearing: 35, zoom: 15 }));
+      } else if (digitalTwinPerspective === 'ground') {
+        setViewState(prev => ({ ...prev, pitch: 42, bearing: 15, zoom: 14.8 }));
+      } else {
+        setViewState(prev => ({ ...prev, pitch: 52, bearing: 22, zoom: 14.5 }));
+      }
     } else {
       setViewState(prev => ({
         ...prev,
@@ -127,7 +146,50 @@ export default function MapComponent({
         zoom: 14
       }));
     }
-  }, [activeTab, is3DMode]);
+  }, [activeTab, is3DMode, digitalTwinPerspective]);
+
+  // Evaluate infrastructure threats based on current flood depth
+  const infrastructureThreats = useMemo(() => {
+    return evaluateInfrastructureThreats(currentPrediction?.maxDepthCm ?? 15);
+  }, [currentPrediction?.maxDepthCm]);
+
+  // Convert hydraulic drainage graph edges to GeoJSON LineStrings with hydraulic status
+  const hydraulicEdgesGeoJson = useMemo(() => {
+    const nodeMap: Record<string, (typeof drainageGraph.nodes)[0]> = {};
+    drainageGraph.nodes.forEach(n => {
+      nodeMap[n.id] = n;
+    });
+
+    const features = drainageGraph.edges.map(e => {
+      const fromNode = nodeMap[e.fromNodeId];
+      const toNode = nodeMap[e.toNodeId];
+      if (!fromNode || !toNode) return null;
+
+      return {
+        type: 'Feature' as const,
+        geometry: {
+          type: 'LineString' as const,
+          coordinates: [
+            [fromNode.lng, fromNode.lat],
+            [toNode.lng, toNode.lat]
+          ]
+        },
+        properties: {
+          id: e.id,
+          diameterMm: e.diameterMm,
+          status: e.status,
+          utilizationPct: e.utilizationPct,
+          currentFlowM3s: e.currentFlowM3s,
+          capacityM3s: e.capacityM3s
+        }
+      };
+    }).filter(Boolean);
+
+    return {
+      type: 'FeatureCollection' as const,
+      features
+    };
+  }, [drainageGraph]);
 
   // Center when location prop changes
   useEffect(() => {
@@ -819,39 +881,140 @@ export default function MapComponent({
           </div>
         </Marker>
 
-        {/* Drainage Network Layer (when Drainage tab selected) */}
-        {activeTab === 'drainage' && drainageGeojson && (
+        {/* ================================================================= */}
+        {/* 6. CRITICAL INFRASTRUCTURE ALERT MARKERS (SIH26085 §16)           */}
+        {/* ================================================================= */}
+        {showFacilities && infrastructureThreats.map(threat => {
+          const isThreatened = threat.status === 'inundated' || threat.status === 'threatened';
+          const isHospital = threat.facility.type === 'hospital';
+          const isFire = threat.facility.type === 'fire_station';
+          const isPower = threat.facility.type === 'power_station';
+
+          return (
+            <Marker 
+              key={threat.facility.id} 
+              longitude={threat.facility.lng} 
+              latitude={threat.facility.lat} 
+              anchor="bottom"
+            >
+              <div className="relative flex flex-col items-center group cursor-pointer">
+                {isThreatened && (
+                  <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-rose-500 animate-ping" />
+                )}
+                <div className={cn(
+                  "p-1.5 rounded-lg shadow-lg border text-white transition-all transform hover:scale-125 flex items-center justify-center",
+                  isThreatened 
+                    ? "bg-rose-600 border-rose-400 ring-2 ring-rose-500/50 animate-bounce" 
+                    : "bg-slate-800 border-slate-600 hover:border-white"
+                )}>
+                  {isHospital && <Building className="w-3.5 h-3.5 text-rose-300" />}
+                  {isFire && <Flame className="w-3.5 h-3.5 text-amber-300" />}
+                  {isPower && <Zap className="w-3.5 h-3.5 text-yellow-300" />}
+                  {!isHospital && !isFire && !isPower && <Building className="w-3.5 h-3.5 text-cyan-300" />}
+                </div>
+
+                {/* Facility Name Tag */}
+                <div className={cn(
+                  "mt-1 px-1.5 py-0.5 rounded text-[9px] font-bold border whitespace-nowrap shadow-md pointer-events-none transition-opacity",
+                  isThreatened 
+                    ? "bg-rose-950/90 text-rose-200 border-rose-700 opacity-100" 
+                    : "bg-slate-900/80 text-slate-300 border-slate-700 opacity-80 group-hover:opacity-100"
+                )}>
+                  {threat.facility.name}
+                  {isThreatened && (
+                    <span className="ml-1 text-rose-400">({threat.status.toUpperCase()})</span>
+                  )}
+                </div>
+              </div>
+            </Marker>
+          );
+        })}
+
+        {/* ================================================================= */}
+        {/* 7. DRAINAGE DIRECTED GRAPH CONDUITS & MANHOLES (SIH26085 §6)      */}
+        {/* ================================================================= */}
+        {(activeTab === 'drainage' || viewMode === 'underground' || viewMode === 'both' || digitalTwinPerspective === 'underground') && (
           <>
-            <Source id="drainage-data" type="geojson" data={drainageGeojson as any}>
+            <Source id="hydraulic-edges-data" type="geojson" data={hydraulicEdgesGeoJson as any}>
               <Layer
-                id="drainage-layer"
+                id="hydraulic-edges-layer"
                 type="line"
                 paint={{
-                  'line-color': '#0ea5e9',
-                  'line-width': 3,
-                  'line-opacity': 0.8
+                  'line-color': [
+                    'match',
+                    ['get', 'status'],
+                    'overcapacity', '#ef4444',
+                    'near_capacity', '#f97316',
+                    'stressed', '#eab308',
+                    '#10b981'
+                  ],
+                  'line-width': digitalTwinPerspective === 'underground' ? 6 : 4,
+                  'line-opacity': 0.9
                 }}
               />
             </Source>
-            {drainageNodesGeojson && (
-              <Source id="drainage-nodes-data" type="geojson" data={drainageNodesGeojson as any}>
-                <Layer
-                  id="drainage-nodes-layer"
-                  type="circle"
-                  paint={{
-                    'circle-radius': 6,
-                    'circle-color': '#3b82f6',
-                    'circle-stroke-width': 2,
-                    'circle-stroke-color': '#ffffff',
-                    'circle-opacity': 0.9
-                  }}
-                />
-              </Source>
-            )}
+
+            {/* Surcharging Manhole Pulsing Beacons */}
+            {drainageGraph.nodes.filter(n => n.isSurcharging || n.utilizationPct > 100).map(n => (
+              <Marker key={n.id} longitude={n.lng} latitude={n.lat} anchor="center">
+                <div className="relative flex items-center justify-center">
+                  <span className="absolute w-8 h-8 rounded-full bg-rose-500/40 animate-ping" />
+                  <div className="w-4 h-4 rounded-full bg-rose-600 border-2 border-white shadow-lg flex items-center justify-center text-[8px] font-black text-white">
+                    !
+                  </div>
+                  <div className="absolute top-5 bg-rose-950/90 text-rose-200 text-[8px] font-mono px-1 rounded border border-rose-800 whitespace-nowrap">
+                    Backflow +{n.backflowRateM3s}m³/s
+                  </div>
+                </div>
+              </Marker>
+            ))}
           </>
         )}
 
       </Map>
+
+      {/* 3D Digital Twin Perspective Floating HUD (SIH26085 §9) */}
+      {(activeTab === '3d-map' || is3DMode) && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 backdrop-blur-md bg-slate-900/90 border border-slate-700 p-1 rounded-xl shadow-2xl flex items-center gap-1">
+          <span className="text-[10px] font-bold text-slate-400 uppercase px-2 flex items-center gap-1">
+            <Box className="w-3.5 h-3.5 text-cyan-400" />
+            3D Twin:
+          </span>
+          <button
+            onClick={() => setDigitalTwinPerspective('ground')}
+            className={cn(
+              "px-2.5 py-1 rounded-lg text-xs font-bold transition-all",
+              digitalTwinPerspective === 'ground' 
+                ? "bg-cyan-500 text-slate-950 shadow-sm" 
+                : "text-slate-400 hover:text-white"
+            )}
+          >
+            Ground View
+          </button>
+          <button
+            onClick={() => setDigitalTwinPerspective('underground')}
+            className={cn(
+              "px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1",
+              digitalTwinPerspective === 'underground' 
+                ? "bg-purple-500 text-slate-950 shadow-sm" 
+                : "text-slate-400 hover:text-white"
+            )}
+          >
+            Underground Pipes
+          </button>
+          <button
+            onClick={() => setDigitalTwinPerspective('combined')}
+            className={cn(
+              "px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1",
+              digitalTwinPerspective === 'combined' 
+                ? "bg-emerald-500 text-slate-950 shadow-sm" 
+                : "text-slate-400 hover:text-white"
+            )}
+          >
+            Combined 1D/2D
+          </button>
+        </div>
+      )}
       
       {/* ================================================================= */}
       {/* 6. DEDICATED LIVE WATER FLOOD DEPTH HUD & MAP LEGEND              */}

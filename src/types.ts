@@ -14,9 +14,19 @@ export interface WeatherData {
   description: string;
 }
 
+export type SensorType = 
+  | 'water_level' 
+  | 'drain_flow' 
+  | 'rain_gauge' 
+  | 'soil_moisture' 
+  | 'weather_station' 
+  | 'cctv_camera' 
+  | 'pump_telemetry';
+
 export interface SensorData {
   id: string;
-  type: 'water_level' | 'drain_flow' | 'rain_gauge';
+  name?: string;
+  type: SensorType;
   lat: number;
   lng: number;
   value: number;
@@ -24,6 +34,8 @@ export interface SensorData {
   status: 'online' | 'warning' | 'offline';
   trend: 'rising' | 'falling' | 'stable';
   lastUpdated: string;
+  batteryPct?: number;
+  signalDbm?: number;
 }
 
 export interface PredictionData {
@@ -41,7 +53,93 @@ export interface RoadRisk {
   timeToFloodMin: number | null;
   probability: number;
   confidence: number;
+  drainUtilizationPct?: number;
+  rainfallIntensityMm?: number;
   cause: string[];
+  drainNodeId?: string;
+  elevationM?: number;
+  coords?: [number, number][];
+}
+
+export type DrainageNodeType = 'manhole' | 'stormwater_inlet' | 'junction' | 'outfall' | 'pumping_station';
+
+export interface DrainageNode {
+  id: string;
+  name: string;
+  type: DrainageNodeType;
+  lat: number;
+  lng: number;
+  elevationM: number;
+  depthM: number;
+  capacityM3s: number;
+  currentFlowM3s: number;
+  utilizationPct: number;
+  status: 'normal' | 'stressed' | 'near_capacity' | 'overcapacity';
+  isSurcharging: boolean;
+  backflowRateM3s: number;
+  blockagePct: number;
+  connectedEdgeIds: string[];
+  nearestRoadId?: string;
+}
+
+export interface DrainageEdge {
+  id: string;
+  name: string;
+  fromNodeId: string;
+  toNodeId: string;
+  lengthM: number;
+  diameterMm: number;
+  slopePct: number;
+  capacityM3s: number;
+  currentFlowM3s: number;
+  utilizationPct: number;
+  blockagePct: number;
+  status: 'normal' | 'stressed' | 'near_capacity' | 'overcapacity';
+  coordinates: [number, number][];
+}
+
+export interface DrainageGraph {
+  nodes: DrainageNode[];
+  edges: DrainageEdge[];
+  systemLoadPct: number;
+  totalBackflowM3s: number;
+  surchargingNodesCount: number;
+}
+
+export interface DEMPoint {
+  id: string;
+  lat: number;
+  lng: number;
+  elevationM: number;
+  type: 'sink' | 'ridge' | 'valley' | 'plain';
+  slopePct: number;
+  runoffCoefficient: number;
+  flowDirectionDeg: number;
+  catchmentId: string;
+}
+
+export interface CriticalFacility {
+  id: string;
+  name: string;
+  type: 'hospital' | 'fire_station' | 'police' | 'school' | 'shelter' | 'power_station' | 'transit_hub';
+  lat: number;
+  lng: number;
+  elevationM: number;
+  thresholdDepthCm: number;
+  currentDepthCm: number;
+  isThreatened: boolean;
+  accessRoad: string;
+}
+
+export interface WhatIfConfig {
+  rainfallMmHr: number;
+  drainBlockagePct: number;
+  drainCapacityMultiplier?: number;
+  pumpCapacityM3s: number;
+  forecastDurationMin?: number;
+  tideLevelM?: number;
+  soilSaturationPct?: number;
+  greenInfraEfficiencyPct?: number;
 }
 
 export interface SafetyRoute {
@@ -62,6 +160,13 @@ export interface SafetyRoute {
   avoidedHazards: string[];
   shelterCapacity?: number;
   turnSteps: string[];
+  vehicleSuitability?: {
+    ambulance: boolean;
+    fireTruck: boolean;
+    police: boolean;
+    transit: boolean;
+    general: boolean;
+  };
 }
 
 export interface SocietyAlert {
@@ -78,5 +183,17 @@ export interface SocietyAlert {
   shelterDistance: string;
   urgentInstructions: string[];
   emergencyContacts: { role: string; phone: string }[];
+}
+
+export interface NowcastSummaryItem {
+  location: string;
+  forecast_minutes: number;
+  flood_probability: number;
+  water_depth_cm: number;
+  drain_utilization: number;
+  confidence: number;
+  time_to_flood_min: number;
+  rainfall_intensity: number;
+  status: 'SAFE' | 'ADVISORY' | 'WARNING' | 'CRITICAL';
 }
 
