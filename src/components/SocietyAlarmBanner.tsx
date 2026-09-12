@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
-import { BellRing, Volume2, VolumeX, ShieldAlert, ChevronRight, Radio } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { BellRing, Volume2, VolumeX, ShieldAlert, ChevronRight, Radio, HeartPulse, Zap } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { Location, PredictionData, SocietyAlert } from '../types';
+import { Location, PredictionData, SocietyAlert, CriticalFacility } from '../types';
 import { getSocietyAlertForLocation } from '../utils/safetyRouting';
 import { startEmergencyAlarm, stopEmergencyAlarm } from '../utils/sirenAudio';
+import { CoupledNowcastState } from '../utils/nowcastEngine';
+import { getCriticalInfrastructure, evaluateFacilityThreats } from '../utils/criticalInfrastructure';
 
 interface SocietyAlarmBannerProps {
   location: Location;
@@ -11,6 +13,8 @@ interface SocietyAlarmBannerProps {
   theme: 'light' | 'dark';
   onOpenAlertModal: () => void;
   onOpenRoutingTab: () => void;
+  coupledState?: CoupledNowcastState;
+  facilities?: CriticalFacility[];
 }
 
 export function SocietyAlarmBanner({
@@ -19,9 +23,33 @@ export function SocietyAlarmBanner({
   theme,
   onOpenAlertModal,
   onOpenRoutingTab,
+  coupledState,
+  facilities: initialFacilities
 }: SocietyAlarmBannerProps) {
   const alertData: SocietyAlert = getSocietyAlertForLocation(location, prediction);
   const [sirenPlaying, setSirenPlaying] = useState(false);
+
+  const effectiveDepth = coupledState?.maxDepthCm ?? alertData.projectedDepthCm;
+
+  const evaluatedFacilities = useMemo(() => {
+    const raw = initialFacilities && initialFacilities.length > 0
+      ? initialFacilities
+      : getCriticalInfrastructure(location.lat, location.lng);
+    const { updatedFacilities } = evaluateFacilityThreats(raw, effectiveDepth);
+    return updatedFacilities;
+  }, [initialFacilities, location.lat, location.lng, effectiveDepth]);
+
+  const threatenedHospitals = useMemo(() => 
+    evaluatedFacilities.filter(f => f.type === 'hospital' && (f.isThreatened || f.currentDepthCm >= f.thresholdDepthCm)),
+    [evaluatedFacilities]
+  );
+
+  const threatenedSubstations = useMemo(() => 
+    evaluatedFacilities.filter(f => f.type === 'power_station' && (f.isThreatened || f.currentDepthCm >= f.thresholdDepthCm)),
+    [evaluatedFacilities]
+  );
+
+  const isThresholdBreach = effectiveDepth >= 15 || threatenedHospitals.length > 0 || threatenedSubstations.length > 0 || (coupledState?.surchargingNodesCount ?? 0) > 0;
 
   const toggleSiren = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -36,8 +64,8 @@ export function SocietyAlarmBanner({
     }
   };
 
-  const isCritical = alertData.alertLevel === 'CRITICAL_ALARM';
-  const isWarning = alertData.alertLevel === 'WARNING';
+  const isCritical = alertData.alertLevel === 'CRITICAL_ALARM' || isThresholdBreach;
+  const isWarning = alertData.alertLevel === 'WARNING' && !isThresholdBreach;
 
   // Always show banner to give quick community alarm access, styling adapts with risk
   return (
@@ -51,7 +79,7 @@ export function SocietyAlarmBanner({
             ? "bg-blue-50 text-blue-900 border-blue-200" 
             : "bg-slate-900 text-slate-200 border-slate-800"
     )}>
-      <div className="flex items-center gap-2.5 flex-1 min-w-[280px]">
+      <div className="flex items-center gap-2.5 flex-1 min-w-[280px] flex-wrap">
         <div className={cn(
           "p-1.5 rounded-lg flex items-center justify-center shrink-0",
           isCritical || isWarning ? "bg-white/20 text-white" : "bg-blue-600 text-white"
@@ -69,11 +97,32 @@ export function SocietyAlarmBanner({
           </span>
           <span className="font-semibold">
             {isCritical 
-              ? `🚨 FLASH FLOOD ALARM: ${alertData.projectedDepthCm}cm standing water expected in ${alertData.estimatedInundationTimeMin}m!`
+              ? `🚨 FLASH FLOOD ALARM: ${effectiveDepth}cm standing runoff expected in ~${coupledState?.timeToFloodMin ?? alertData.estimatedInundationTimeMin}m!`
               : isWarning
-                ? `⚠️ FLOOD ADVISORY: Rising storm runoff. Check ground floor drains & safe escape routes.`
+                ? `⚠️ FLOOD ADVISORY: Rising runoff (${effectiveDepth}cm). Monitor low-lying drains.`
                 : `Community Flood Monitoring Active • No active inundation warning.`}
           </span>
+
+          {/* Lifeline Badges */}
+          {threatenedHospitals.length > 0 && (
+            <button
+              onClick={onOpenAlertModal}
+              className="inline-flex items-center gap-1 text-[10px] font-black uppercase px-2 py-0.5 rounded bg-white text-rose-700 hover:bg-rose-50 shadow-sm transition-transform active:scale-95"
+            >
+              <HeartPulse className="w-3 h-3 text-rose-600 animate-pulse" />
+              <span>Hospital Ingress Warning ({threatenedHospitals[0].currentDepthCm}cm)</span>
+            </button>
+          )}
+
+          {threatenedSubstations.length > 0 && (
+            <button
+              onClick={onOpenAlertModal}
+              className="inline-flex items-center gap-1 text-[10px] font-black uppercase px-2 py-0.5 rounded bg-yellow-300 text-slate-950 hover:bg-yellow-200 shadow-sm transition-transform active:scale-95"
+            >
+              <Zap className="w-3 h-3 text-amber-700" />
+              <span>Substation Breach ({threatenedSubstations[0].currentDepthCm}cm)</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -115,15 +164,17 @@ export function SocietyAlarmBanner({
           type="button"
           onClick={onOpenAlertModal}
           className={cn(
-            "px-2.5 py-1 rounded-md font-bold uppercase tracking-wider text-[10px] flex items-center gap-1 transition-colors border",
+            "px-2.5 py-1 rounded-md font-bold uppercase tracking-wider text-[10px] flex items-center gap-1.5 transition-colors border",
             isCritical || isWarning 
               ? "border-white/40 text-white hover:bg-white/10" 
               : theme === 'light' ? "border-slate-300 text-slate-700 hover:bg-slate-100" : "border-slate-700 text-slate-300 hover:bg-slate-800"
           )}
         >
-          <span>Broadcast Center</span>
+          <Radio className="w-3 h-3 animate-pulse" />
+          <span>Alerts & Push Center</span>
         </button>
       </div>
     </div>
   );
 }
+

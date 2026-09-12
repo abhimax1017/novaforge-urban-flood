@@ -145,6 +145,43 @@ export function playAlertChirp(): void {
   }
 }
 
+/**
+ * Plays an urgent two-pulse threshold breach acoustic warning tone.
+ * Specifically triggered on hydrodynamic / critical infrastructure breaches.
+ */
+export function playThresholdBreachAlert(): void {
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+
+    // Beep 1 (High tone 880 Hz)
+    const osc1 = ctx.createOscillator();
+    const g1 = ctx.createGain();
+    osc1.type = 'sawtooth';
+    osc1.frequency.setValueAtTime(880, now);
+    g1.gain.setValueAtTime(0.25, now);
+    g1.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+    osc1.connect(g1);
+    g1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.2);
+
+    // Beep 2 (Critical warning tone 1046 Hz)
+    const osc2 = ctx.createOscillator();
+    const g2 = ctx.createGain();
+    osc2.type = 'sawtooth';
+    osc2.frequency.setValueAtTime(1046.5, now + 0.25);
+    g2.gain.setValueAtTime(0.3, now + 0.25);
+    g2.gain.exponentialRampToValueAtTime(0.01, now + 0.55);
+    osc2.connect(g2);
+    g2.connect(ctx.destination);
+    osc2.start(now + 0.25);
+    osc2.stop(now + 0.55);
+  } catch (e) {
+    console.warn('Threshold breach alert tone failed:', e);
+  }
+}
+
 export function isAlarmPlaying(): boolean {
   return isPlaying;
 }

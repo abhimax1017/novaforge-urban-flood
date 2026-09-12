@@ -192,6 +192,8 @@ export default function App() {
         theme={mapTheme}
         onOpenAlertModal={() => setIsSocietyAlertOpen(true)}
         onOpenRoutingTab={() => setActiveTab('routing')}
+        coupledState={coupledState}
+        facilities={CRITICAL_FACILITIES}
       />
       
       <div className="flex flex-1 overflow-hidden relative">
