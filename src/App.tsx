@@ -382,6 +382,8 @@ export default function App() {
         location={selectedLocation}
         prediction={currentPrediction}
         theme={mapTheme}
+        coupledState={coupledState}
+        facilities={CRITICAL_FACILITIES}
         onSelectRoute={(id) => {
           setSelectedRouteId(id);
           setActiveTab('routing');
